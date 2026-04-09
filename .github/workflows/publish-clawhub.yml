@@ -29,7 +29,7 @@ jobs:
           node-version: '22'
 
       - name: Install ClawHub CLI
-        run: npm i -g clawdhub
+        run: npm i -g clawdhub undici
 
       - name: Resolve version and changelog
         id: meta
