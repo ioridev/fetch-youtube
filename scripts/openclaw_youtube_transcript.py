@@ -1,70 +1,21 @@
 #!/usr/bin/env python3
-"""
-Fetch YouTube - YouTube transcript extraction tool
+"""OpenClaw YouTube Transcript, transcript extraction tool."""
 
-Usage:
-  fetch-youtube --url "https://youtube.com/watch?v=VIDEO_ID"
-  youtube-summarizer --channel "UC_x5XG1OV2P6uZZ5FSM9Ttw" --hours 24
-  youtube-summarizer --config channels.json --daily --output /tmp/youtube_summary.json
-"""
-
-import os
 import re
 import sys
 import json
 import argparse
 import subprocess
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional, List, Dict
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
 # Default config
 DEFAULT_MIN_DURATION = 300  # 5 minutes (filter Shorts)
 DEFAULT_HOURS_LOOKBACK = 24
 DEFAULT_MAX_VIDEOS_PER_CHANNEL = 5
-DEFAULT_OUTPUT = "/tmp/youtube_summary.json"
-
-# LLM API config
-OPENCLAW_CONFIG = os.path.expanduser("~/.openclaw/openclaw.json")
-
-SUMMARY_PROMPT_TEMPLATE = """You are a professional content analyst. Please generate an in-depth, practical summary (at least 300 words) for the following YouTube video transcript.
-
-Video Title: {title}
-Channel: {channel}
-Duration: {duration}
-Transcript: {transcript}
-
-Please output strictly in the following format (no preamble):
-
-### 🎯 Core Problem/Innovation
-- Summarize in one sentence what problem the video addresses
-- What novel perspectives or technical breakthroughs are presented
-
-### 💡 Key Arguments (detailed, 2-3 sentences each)
-1. **Argument 1**: Detailed explanation with specific data, examples, or evidence
-2. **Argument 2**: ...
-3. **Argument 3**: ...
-
-### 🛠️ Practical Steps (if applicable)
-1. Step 1: Specific instructions
-2. Step 2: ...
-
-### 💰 Value & Application
-- Who would benefit from this content
-- How to apply it to real work/life situations
-
-### ⚠️ Considerations
-- Risks, limitations, and important notes"""
-
-
-def get_openclaw_token() -> Optional[str]:
-    """Get OpenClaw gateway token for LLM API calls"""
-    try:
-        with open(OPENCLAW_CONFIG, "r") as f:
-            config = json.load(f)
-            return config.get("gateway", {}).get("auth", {}).get("token")
-    except:
-        return None
+DEFAULT_OUTPUT = "/tmp/openclaw_youtube_transcript.json"
 
 
 def get_channel_videos(channel_id: str, hours: int, max_videos: int) -> List[Dict]:
@@ -166,8 +117,7 @@ def get_video_details(video_id: str) -> Optional[Dict]:
 
 
 def get_transcript(video_id: str) -> Optional[str]:
-    """Get video transcript using multiple methods to avoid rate limiting"""
-    # Method 1: innertube ANDROID client + Cloudflare proxy (bypasses rate limits)
+    """Get video transcript using multiple methods."""
     transcript = _get_transcript_innertube_proxy(video_id)
     if transcript:
         return transcript
@@ -180,8 +130,7 @@ def get_transcript(video_id: str) -> Optional[str]:
     return None
 
 
-# Cloudflare Workers proxy for downloading caption XML (bypasses 429 rate limits)
-CF_PROXY_URL = 'https://your-cloudflare-proxy.workers.dev/?url='  # Optional: Cloudflare Workers proxy to bypass rate limits
+CF_PROXY_URL = None
 
 
 def _parse_caption_xml(xml_text: str) -> List[str]:
@@ -217,20 +166,19 @@ def _parse_caption_xml(xml_text: str) -> List[str]:
 
 
 def _download_caption(url: str) -> Optional[str]:
-    """Download caption content, try proxy first then direct"""
+    """Download caption content, optionally through a user-supplied proxy first."""
     import urllib.parse
     import requests
-    
-    # 1. Through Cloudflare proxy
-    try:
-        proxied = CF_PROXY_URL + urllib.parse.quote(url, safe='')
-        r = requests.get(proxied, timeout=15)
-        if r.status_code == 200 and r.text.strip():
-            return r.text
-    except Exception:
-        pass
-    
-    # 2. Direct connection fallback
+
+    if CF_PROXY_URL:
+        try:
+            proxied = CF_PROXY_URL + urllib.parse.quote(url, safe='')
+            r = requests.get(proxied, timeout=15)
+            if r.status_code == 200 and r.text.strip():
+                return r.text
+        except Exception:
+            pass
+
     try:
         r = requests.get(url, timeout=15)
         if r.status_code == 200 and r.text.strip():
@@ -415,47 +363,32 @@ def _get_transcript_ytapi(video_id: str) -> Optional[str]:
         return None
 
 
-def generate_summary(title: str, channel: str, duration: str, transcript: str) -> Optional[str]:
-    """Unused legacy summary function."""
-    token = get_openclaw_token()
-    if not token:
-        print("⚠️ No OpenClaw token found", file=sys.stderr)
-        return None
-    
-    prompt = SUMMARY_PROMPT_TEMPLATE.format(
-        title=title,
-        channel=channel,
-        duration=duration,
-        transcript=transcript[:8000]  # Limit transcript length
-    )
-    
-    try:
-        import requests
-        
-        response = requests.post(
-            "http://localhost:3000/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "gpt-4o-mini",  # or your preferred model
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 2000
-            },
-            timeout=120
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            return result["choices"][0]["message"]["content"]
-        else:
-            print(f"⚠️ LLM API error: {response.status_code}", file=sys.stderr)
-            return None
-            
-    except Exception as e:
-        print(f"⚠️ Summary generation error: {e}", file=sys.stderr)
-        return None
+def extract_video_id(url_or_id: str) -> Optional[str]:
+    """Extract a YouTube video ID from a video URL or raw ID."""
+    value = url_or_id.strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", value):
+        return value
+
+    parsed = urlparse(value)
+    host = parsed.netloc.lower()
+    path = parsed.path.strip("/")
+
+    if host in {"youtu.be", "www.youtu.be"}:
+        candidate = path.split("/")[0] if path else ""
+        return candidate if re.fullmatch(r"[A-Za-z0-9_-]{11}", candidate) else None
+
+    if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}:
+        query_id = parse_qs(parsed.query).get("v", [None])[0]
+        if query_id and re.fullmatch(r"[A-Za-z0-9_-]{11}", query_id):
+            return query_id
+
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live", "watch"}:
+            candidate = parts[1] if parts[0] != "watch" else None
+            if candidate and re.fullmatch(r"[A-Za-z0-9_-]{11}", candidate):
+                return candidate
+
+    return None
 
 
 def process_video(video_id: str, title: str = None, channel: str = None) -> Dict:
@@ -501,8 +434,8 @@ def process_video(video_id: str, title: str = None, channel: str = None) -> Dict
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch YouTube")
-    parser.add_argument("--url", help="Single video URL")
+    parser = argparse.ArgumentParser(description="OpenClaw YouTube Transcript")
+    parser.add_argument("--url", help="Single YouTube URL or video ID")
     parser.add_argument("--channel", help="Channel ID or handle")
     parser.add_argument("--config", help="Config file path (JSON)")
     parser.add_argument("--daily", action="store_true", help="Daily batch mode (requires --config)")
@@ -523,7 +456,10 @@ def main():
     
     # Mode 1: Single video
     if args.url:
-        video_id = args.url.split("v=")[-1].split("&")[0]
+        video_id = extract_video_id(args.url)
+        if not video_id:
+            print("⚠️ Could not extract a valid YouTube video ID from --url", file=sys.stderr)
+            sys.exit(2)
         result = process_video(video_id)
         results["items"].append(result)
         results["stats"]["total_videos"] = 1

@@ -77,6 +77,8 @@ Single video:
 ./openclaw-youtube-transcript --url "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
+It also accepts raw video IDs, `youtu.be/...`, and `youtube.com/shorts/...` URLs.
+
 Recent videos from a channel or handle:
 
 ```bash
@@ -143,17 +145,19 @@ git clone https://github.com/ioridev/openclaw-youtube-transcript.git
 
 After that, OpenClaw can discover the skill from the `SKILL.md` metadata.
 
-If you just want to run it directly, the entrypoint is:
+If you just want to run it directly, use the bash entrypoint:
 
 ```bash
 ./openclaw-youtube-transcript
 ```
 
-The main script is:
+The Python implementation lives at:
 
 ```bash
 scripts/openclaw_youtube_transcript.py
 ```
+
+Do not run `python openclaw-youtube-transcript`, because `openclaw-youtube-transcript` itself is a shell wrapper.
 
 Typical OpenClaw-side use is: fetch the transcript first, then let OpenClaw read the transcript text directly for analysis, translation, extraction, or summarization.
 
@@ -172,6 +176,12 @@ That keeps the workflow transcript-first and avoids losing information through a
 One of the main reasons to use this project is that uploader-provided subtitles are not required.
 
 If YouTube has generated automatic captions for the video, `openclaw-youtube-transcript` can often recover them even when ordinary transcript methods fail. That is the core value of the project.
+
+## Security and proxy note
+
+This project does not use any third-party caption proxy by default.
+
+If you want to route caption downloads through your own proxy, set that up explicitly in the script or your own fork. The default behavior is direct fetch only, which avoids accidentally sending caption URLs through a placeholder or someone else's proxy.
 
 ## License
 
