@@ -65,6 +65,8 @@ If the goal is to let OpenClaw understand a video well, returning only a summary
 - custom summaries tailored to the user's task
 - reusing the transcript in other tools or agents
 
+This is also what makes the output flexible downstream. Once you have the transcript, you can summarize it, translate it, extract quotes, or turn it into structured data later with whatever model and prompt you want.
+
 So this project is intentionally transcript-first, not summary-first.
 
 ## Usage
